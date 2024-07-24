@@ -17,8 +17,6 @@ stock_list <- get_common_etfs()
 
 common_start_date <- find_common_start_date(stock_list)
 
-#rf <- .05 / 242
-
 weights <- c(1, rep(0, length(stock_list) - 1))
 
 test <- portfolio(stock_list, from = common_start_date)
