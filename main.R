@@ -9,9 +9,9 @@ setwd(path)
 
 source("portfolio.R")
 
-source("common_start_date.R")
+source("find_common_start_date.R")
 
-source("ticker_names.R")
+source("get_ticker_names.R")
 
 stock_list <- get_common_etfs()
 
