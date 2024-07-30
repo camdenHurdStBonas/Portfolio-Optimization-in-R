@@ -5,8 +5,9 @@ library(ggplot2)  # For Visualization
 library(moments)  # For skewness and kurtosis
 library(MASS)     # For fitdistr function
 library(reshape2) # For melt function
-
-library(ggrepel)
+suppressWarnings({
+  library(ggrepel)# For frepel function
+  })
 
 # Define the portfolio function
 portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
@@ -25,11 +26,12 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     add_stats <- list(
       skewness = skewness(returns, na.rm = TRUE), # Skewness
       kurtosis = kurtosis(returns, na.rm = TRUE), # Kurtosis
-      VaR = exp(quantile(returns, probs = 0.05, na.rm = TRUE))-1, # geometric Value ar Risk
-      ES = exp(mean(returns[returns <= quantile(returns, probs = 0.05, na.rm = TRUE)], na.rm = TRUE))-1, # geometric Estimated Shortfall
-      lower_partial_sd = exp(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE))-1, # geometric lower partial standard deviation
-      sortino_ratio = ((exp(mean(returns))-1) - rf) / (exp(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE))-1), # geometric Sortino ratio
+      VaR = log(quantile(returns, probs = 0.05, na.rm = TRUE)+1), # geometric Value at Risk
+      ES = log(mean(returns[returns <= quantile(returns, probs = 0.05, na.rm = TRUE)], na.rm = TRUE)+1), # geometric Estimated Shortfall
+      lower_partial_sd = log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1), # geometric lower partial standard deviation
+      sortino_ratio = ((log(mean(returns)+1)) - rf) / (log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1)), # geometric Sortino ratio
       CAGR = (prod(1 + returns, na.rm = TRUE)^(1 / (length(returns) / freq_multiplier)) - 1), # compound annual growth rate
+      ADD = log( mean( cumprod(1 + returns) / cummax( cumprod(1 + returns) ) ) ),
       MDD = min( cumprod(1 + returns) / cummax( cumprod(1 + returns)) - 1,na.rm = TRUE), # Maximum draw down
       count = length(returns) # count
     )
@@ -52,12 +54,12 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     stats_matrix <- matrix(unlist(stats),ncol=1)
     colnames(stats_matrix) <- paste(name,"Weighted Port")
     stats_matrix <- rbind(
-      exp(mean(weighted_returns))-1,
-      (exp(mean(weighted_returns))-1)-rf,
-      exp(sd(weighted_returns,na.rm = TRUE))-1,
-      ((exp(mean(weighted_returns))-1)-rf)/(exp(sd(weighted_returns,na.rm = TRUE))-1),
+      log(mean(weighted_returns)+1),
+      (log(mean(weighted_returns)+1))-rf,
+      log(sd(weighted_returns,na.rm = TRUE)+1),
+      ((log(mean(weighted_returns)+1))-rf)/(log(sd(weighted_returns,na.rm = TRUE)+1)),
       stats_matrix)
-    rownames(stats_matrix) <- c("Geo Mean","Geo Risk Premium","Geo Sd","Geo Sharpe","Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","MDD","Count")
+    rownames(stats_matrix) <- c("Geo Mean","Geo Risk Premium","Geo Sd","Geo Sharpe","Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
     
     # return matrix
     return(stats_matrix)
@@ -90,7 +92,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   })
   
   #Extracting the adjusted close
-  rf_series <- Ad(rf_data) / 100 / freq_multiplier  # Adjusting to decimal and to the time period
+  rf_series <- ((Ad(rf_data) / 100)+1) ^ (1 / freq_multiplier)-1  # Adjusting to decimal and to the time period
   
   # Replace NA values with the previous rate or average rate
   rf_series <- rf_series[-1]  # Remove the first element because it is Na in excess Ln returns
@@ -105,7 +107,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     rf <- average_rf_rate
   } else { # if there is a risk free rate given by user
     # Use a constant rate
-    rf <- rf/freq_mutiplier # User has to input an anual rate because we divide it for them
+    rf <- (rf+1)^(1/freq_multiplier)-1 # User has to input an anual rate because we divide it for them
     risk_free_rates <- xts(rep(rf, nrow(rf_series)), order.by = index(rf_series))
   }
   
@@ -193,11 +195,11 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   
   
   # Compute the geometric mean of the excess log returns
-  geometric_means <- apply(excess_log_return_matrix, 2, function(x) exp(mean(x, na.rm = TRUE)) - 1)
+  geometric_means <- apply(excess_log_return_matrix, 2, function(x) log(mean(x, na.rm = TRUE)+1))
   
   # Compute the geometric standard deviation of the excess log returns
   geometric_standard_deviations <- apply(excess_log_return_matrix, 2, function(x) {
-    exp(sd(x, na.rm = TRUE)) - 1
+    log(sd(x, na.rm = TRUE)+1)
   })
   
   # Compute the sharpe of the excess log returns
@@ -261,7 +263,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   
   # Calculate standard deviation of the tangency portfolio
   tangency_variance <- t(tangency_weights) %*% covariance_matrix %*% tangency_weights
-  tangency_sd <- exp(sqrt(tangency_variance))-1
+  tangency_sd <- log(sqrt(tangency_variance)+1)
   
   # Calculate Sharpe ratio of the tangency portfolio
   tangency_sharpe_ratio <- (tangency_geometric_mean - rf) / tangency_sd
@@ -282,13 +284,14 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   
   # Store stocks statistics matrices
   stock_stats_matrix <- sapply(stock_stats, function(x) unlist(x))
-  rownames(stock_stats_matrix) <- c("Skewness", "Kurtosis", "VaR", "ES", "Lower Partial SD","Sortino Ratio", "CAGR","MDD","Count")
+  rownames(stock_stats_matrix) <- c("Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
   stock_stats_matrix <- t(stock_stats_matrix)
   stock_stats_matrix <- cbind(
     "Geo Mean"= geometric_means,
-    "Risk Premium"= excess_returns,
+    "Geo Risk Premium"= excess_returns,
     "Geo SD"= geometric_standard_deviations,
-    "Sharpe ratio"= sharpe_ratios, stock_stats_matrix,
+    "Geo Sharpe"= sharpe_ratios, 
+    stock_stats_matrix,
     "Tangency Weights" = tangency_weights)
   
   # Store statistics matrices into local variables
@@ -307,7 +310,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   obj$ef <- function() {
     
     # Efficient frontier
-    returns_seq <- seq(min(excess_returns), max(excess_returns), length.out = 100)
+    returns_seq <- seq(min(excess_returns), max(geometric_means), length.out = 100)
     efficient_frontier <- data.frame(Return = numeric(100), Risk = numeric(100))
     
     for (j in 1:length(returns_seq)) {
@@ -329,7 +332,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       
       # Calculate return and risk for the efficient frontier
       return_ef <- sum(weights_ef * geometric_means)
-      risk_ef <- exp(sqrt(t(weights_ef) %*% covariance_matrix %*% weights_ef))-1
+      risk_ef <- log(sqrt(t(weights_ef) %*% covariance_matrix %*% weights_ef)+1)
       
       efficient_frontier$Return[j] <- return_ef
       efficient_frontier$Risk[j] <- risk_ef
@@ -430,34 +433,56 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     weighted_returns_df <- data.frame(Date = dates, Weighted_Returns = as.numeric(weighted_returns))
     cumulative_returns_df <- data.frame(Date = dates, Cumulative_Returns = as.numeric(cumulative_returns))
     
-    # Create a sequence of compounded cumulative returns for the average and bounds
-    cumulative_returns_df <- cumulative_returns_df %>%
-      mutate(
-        Average_Cumulative_Return = cumprod(rep(exp(mean(weighted_returns)), length(weighted_returns)))-1,
-        Upper_Bound = (Average_Cumulative_Return+1) * exp(sd(weighted_returns))^2-1,
-        Lower_Bound = (Average_Cumulative_Return+1) / exp(sd(weighted_returns))^2-1
-      )
+    # Calculate the geometric mean and geometric standard deviation
+    geom_mean <- log(mean(weighted_returns)+1)
+    
+    # Calculate the average cumulative return line
+    cumulative_returns_df$Average_Cumulative_Return <- cumprod(rep(1 + geom_mean, length(weighted_returns))-rf) - 1
+    
+    # Create a dataframe for the plot
+    weights_df <- data.frame(
+      Stock = colnames(excess_log_return_matrix),
+      Weight = port_weights
+    )
+    
+    # Sort the dataframe by weight in descending order
+    weights_df <- weights_df[order(-weights_df$Weight), ]
+    
+    # Generate a color palette
+    num_stocks <- nrow(weights_df)
+    colors <- rainbow(num_stocks)
+    names(colors) <- weights_df$Stock
+    
+    # Create the bar plot
+    weights_plot <- ggplot(weights_df, aes(x = reorder(Stock, -Weight), y = Weight * 100, fill = Stock)) +
+      geom_bar(stat = "identity") +
+      ggtitle(paste("Investment Weights in ", name, " Portfolio", sep = "")) +
+      xlab("Stock") +
+      ylab("Weight (%)") +
+      scale_y_continuous(limits = c(0, 100)) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, color = colors[weights_df$Stock])) +
+      scale_fill_manual(values = colors) +
+      theme(legend.position = "none")  # Hide the legend, as we are using color for axis labels
+    
+    print(weights_plot)
     
     # Create the time series plot of cumulative returns
     cumulative_returns_plot <- ggplot(cumulative_returns_df, aes(x = Date)) +
       geom_line(aes(y = Cumulative_Returns * 100, color = "Compounded Cumulative Excess Ln Returns")) +
       geom_line(aes(y = Average_Cumulative_Return * 100, color = "Geometric Mean"), linetype = "dashed") +
-      geom_line(aes(y = Upper_Bound * 100, color = "Mean * 2 SD"), linetype = "dotted") +
-      geom_line(aes(y = Lower_Bound * 100, color = "Mean / 2 SD"), linetype = "dotted") +
       ggtitle(paste("Time series of Compounded Cumulative ",frequency," Excess Ln Returns of ", name, " Weighted Portfolio (Final Value: ", round(tail(cumulative_returns, 1) * 100, 2), "%)\n(", from, " to ",end_date,")", sep = "")) +
       xlab("Date") +
       ylab(paste("Compounded Cumulative",frequency,"Excess Ln Return in P.P. (%)")) +
       theme_minimal() +
       scale_color_manual(name = "Legend",
                          values = c("Compounded Cumulative Excess Ln Returns" = "blue",
-                                    "Geometric Mean" = "red",
-                                    "Mean * 2 SD" = "green",
-                                    "Mean / 2 SD" = "green"),
+                                    "Geometric Mean" = "green"),
+                                    #"Mean * 2 SD" = "red",
+                                    #"Mean / 2 SD" = "red"),
                          labels = c(
                            paste("Compounded Cumulative ",frequency," Excess Ln Returns",sep = ""),
-                           paste("Geometric Mean (", round((exp(mean(weighted_returns)) - 1) * 100, 2), "%)", sep = ""),
-                           paste("Geo Mean * Geo SD ^2 (", round((exp(mean(weighted_returns)) * exp(sd(weighted_returns))^2 - 1) * 100, 2), "%)", sep = ""),
-                           paste("Geo Mean / Geo SD ^2 (", round((exp(mean(weighted_returns)) / exp(sd(weighted_returns))^2 - 1) * 100, 2), "%)", sep = "")
+                           paste("Risk Premium (", round((log(mean(weighted_returns)+1)-rf) * 100, 2), "%)", sep = "")
                          ))
     
     print(cumulative_returns_plot)
@@ -466,20 +491,20 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     hist(weighted_returns+1, breaks = 50, probability = TRUE, col = "lightblue", xlab = paste(frequency," Excess Ln Growth Rates",sep=""), main = paste("Histogram of ",name," Weighted Portfolio ",frequency," Excess Ln Returns with a Lognormal Curve\n(",from," to ",end_date,")",sep=""))
     curve(dlnorm(x, meanlog = meanlog, sdlog = sdlog), add = TRUE, col = "red", lwd = 2)
     # Draw vertical lines for mean and ±2 standard deviations
-    abline(v = exp(mean(weighted_returns)), col = "green", lwd = 2, lty = 2)  # Mean
-    abline(v = exp(mean(weighted_returns)) * exp(sd(weighted_returns))^2, col = "red", lwd = 2, lty = 2)  # Mean + 2 SD
-    abline(v = exp(mean(weighted_returns)) / exp(sd(weighted_returns))^2, col = "red", lwd = 2, lty = 2)  # Mean - 2 SD
-    abline(v = exp(mean(weighted_returns)) * exp(sd(weighted_returns)), col = "yellow", lwd = 2, lty = 2)  # Mean + 2 SD
-    abline(v = exp(mean(weighted_returns)) / exp(sd(weighted_returns)), col = "yellow", lwd = 2, lty = 2)  # Mean - 2 SD
+    abline(v = log(mean(weighted_returns)+1)+1, col = "green", lwd = 2, lty = 2)  # Mean
+    abline(v = (log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1)^2, col = "red", lwd = 2, lty = 2)  # Mean + 2 SD
+    abline(v = (log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2, col = "red", lwd = 2, lty = 2)  # Mean - 2 SD
+    abline(v = (log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1), col = "yellow", lwd = 2, lty = 2)  # Mean + 2 SD
+    abline(v = (log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1), col = "yellow", lwd = 2, lty = 2)  # Mean - 2 SD
     grid()
     # Add a legend
     legend("topright",
            legend = c(
-             paste("Geometric Mean (",round(exp(mean(weighted_returns)),4),")",sep=""),
-             paste("Geo Mean * Geo SD ^2 (",round(exp(mean(weighted_returns)) * exp(sd(weighted_returns))^2,4),"%)",sep=""),
-             paste("Geo Mean / Geo SD ^2 (",round(exp(mean(weighted_returns)) / exp(sd(weighted_returns))^2,4),"%)",sep=""),
-             paste("Geo Mean * Geo SD (",round(exp(mean(weighted_returns)) * exp(sd(weighted_returns)),4),"%)",sep=""),
-             paste("Geo Mean / Geo SD (",round(exp(mean(weighted_returns)) / exp(sd(weighted_returns)),4),"%)",sep="")
+             paste("Geometric Mean (",round(log(mean(weighted_returns)+1)+1,4),")",sep=""),
+             paste("Geo Mean * Geo SD ^2 (",round((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1)^2,4),"%)",sep=""),
+             paste("Geo Mean / Geo SD ^2 (",round((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2,4),"%)",sep=""),
+             paste("Geo Mean * Geo SD (",round((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1),4),"%)",sep=""),
+             paste("Geo Mean / Geo SD (",round((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1),4),"%)",sep="")
              ), 
            col = c( "green", "red", "red","yellow","yellow"),
            lwd = 2,
@@ -492,11 +517,11 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       Line_Type = c("Excess Ln Returns","Geometric Mean","Mean * SD", "Mean / SD", "Mean * 2 SD", "Mean / 2 SD"),
       yintercept = c(
         NA,
-        exp(mean(weighted_returns)) - 1,
-        exp(mean(weighted_returns)) * exp(sd(weighted_returns)) - 1,
-        exp(mean(weighted_returns)) / exp(sd(weighted_returns)) - 1,
-        exp(mean(weighted_returns)) * exp(sd(weighted_returns))^2 - 1,
-        exp(mean(weighted_returns)) / exp(sd(weighted_returns))^2 - 1
+        log(mean(weighted_returns)+1),
+        (log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1) - 1,
+        (log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1) - 1,
+        (log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1)^2 - 1,
+        (log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2 - 1
       )
     )
     
@@ -515,11 +540,11 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
                            ),
                          labels = c(
                            paste(frequency," Excess Ln Returns",sep=""),
-                           paste("Geometric Mean (",round((exp(mean(weighted_returns)) - 1)*100,2),"%)",sep=""),
-                           paste("Geo Mean * Geo SD ^2 (",round((exp(mean(weighted_returns)) * exp(sd(weighted_returns))^2 - 1)*100,2),"%)",sep=""), 
-                           paste("Geo Mean * Geo SD (",round((exp(mean(weighted_returns)) * exp(sd(weighted_returns)) - 1)*100,2),"%)",sep=""),
-                           paste("Geo Mean / Geo SD ^2 (",round((exp(mean(weighted_returns)) / exp(sd(weighted_returns))^2 - 1)*100,2),"%)",sep=""),
-                           paste("Geo Mean / Geo SD (",round((exp(mean(weighted_returns)) / exp(sd(weighted_returns)) - 1)*100,2),"%)",sep="")
+                           paste("Geometric Mean (",round((log(mean(weighted_returns)+1))*100,2),"%)",sep=""),
+                           paste("Geo Mean * Geo SD ^2 (",round(((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1)^2 - 1)*100,2),"%)",sep=""), 
+                           paste("Geo Mean * Geo SD (",round(((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1) - 1)*100,2),"%)",sep=""),
+                           paste("Geo Mean / Geo SD ^2 (",round(((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2 - 1)*100,2),"%)",sep=""),
+                           paste("Geo Mean / Geo SD (",round(((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1) - 1)*100,2),"%)",sep="")
                            )
                          ) +
       ggtitle(paste("Time Series of ",name, " Weighted Portfolio ",frequency," Excess Ln Returns\n(", from, " to ",end_date,")", sep = "")) +
@@ -533,10 +558,10 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     drawdowns <- (cumulative_returns+1) / cummax(cumulative_returns+1) - 1
     
     # Calculate the average drawdown
-    average_drawdown <- exp(mean(drawdowns, na.rm = TRUE))-1
+    average_drawdown <- log(mean(drawdowns, na.rm = TRUE)+1)
     
     # Calculate the average drawdown
-    sd_drawdown <- exp(sd(drawdowns, na.rm = TRUE))
+    sd_drawdown <- log(sd(drawdowns, na.rm = TRUE)+1)+1
     
     # Convert to data frame for plotting
     drawdowns_df <- data.frame(Date = dates_list, Drawdown = as.numeric(drawdowns))
@@ -596,7 +621,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     df_melt <- melt(df, id.vars = "Date", variable.name = "Portfolio", value.name = "Log_Return")
     
     # Calculate cumulative returns for each portfolio
-    df_melt$Cumulative_Return <- ave(df_melt$Log_Return, df_melt$Portfolio, FUN = function(x) cumprod(x+1)-1)
+    df_melt$Cumulative_Return <- ave(df_melt$Log_Return, df_melt$Portfolio, FUN = function(x) cumprod(x + 1) - 1)
     
     # Extract the last cumulative return value for each portfolio
     final_cumulative_returns <- aggregate(Cumulative_Return ~ Portfolio, data = df_melt, FUN = function(x) tail(x, 1))
@@ -605,10 +630,31 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     labels <- with(final_cumulative_returns, paste(Portfolio,
                                                    "\n(Final Value: ", round(Cumulative_Return * 100, 2), "%)", sep = ""))
     
+    # Calculate geometric means
+    geom_means <- df %>%
+      summarise(across(Tangency:Equal, ~ log(mean(.)+1)))
+    
+    # Create a dataframe for the geometric mean lines
+    geom_mean_df <- data.frame(
+      Date = index(excess_log_return_matrix),
+      Tangency_Geo_Mean = cumprod(rep(1 + geom_means$Tangency, nrow(df))-rf) - 1,
+      Weighted_Geo_Mean = cumprod(rep(1 + geom_means$Weighted, nrow(df))-rf) - 1,
+      Equal_Geo_Mean = cumprod(rep(1 + geom_means$Equal, nrow(df))-rf) - 1
+    )
+    
+    # Melt the geometric mean dataframe for ggplot2
+    geom_mean_melt <- melt(geom_mean_df, id.vars = "Date", variable.name = "Portfolio", value.name = "Geo_Mean_Cumulative_Return")
+    
+    # Adjust the Portfolio labels to match the main data
+    geom_mean_melt$Portfolio <- gsub("_Geo_Mean", "", geom_mean_melt$Portfolio)
+    
     # Plot the cumulative returns
-    comparison_plot <- ggplot(df_melt, aes(x = Date, y = Cumulative_Return*100, color = Portfolio)) +
+    comparison_plot <- ggplot(df_melt, aes(x = Date, y = Cumulative_Return * 100, color = Portfolio)) +
       geom_line(size = 1) +
-      labs(title = paste("Time Series of Portfolio Compounded Cumulative ",frequency," Excess Ln Return Comparison\n(",from," to ",end_date,")",sep = ""), x = "Date", y = paste("Compounded Cumulative ",frequency," Excess Ln Return in P.P. (%)",sep="")) +
+      geom_line(data = geom_mean_melt, aes(x = Date, y = Geo_Mean_Cumulative_Return * 100, color = Portfolio), linetype = "dotted", size = 1) +
+      labs(title = paste("Time Series of Portfolio Compounded Cumulative ", frequency, " Excess Ln Return Comparison\n(", from, " to ", end_date, ")", sep = ""), 
+           x = "Date", 
+           y = paste("Compounded Cumulative ", frequency, " Excess Ln Return in P.P. (%)", sep = "")) +
       theme_minimal() +
       scale_color_manual(values = c("Tangency" = "blue", "Weighted" = "red", "Equal" = "green"), labels = labels)
     
