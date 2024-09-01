@@ -180,13 +180,13 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   
   # Create a matrix for the adjusted close prices and stores it in the local environment
   adjusted_close_prices_matrix <- do.call(cbind, adjusted_close_prices_list)
-  colnames(adjusted_close_prices_matrix) <- stock_list
+  colnames(adjusted_close_prices_matrix) <- names_list
   obj$adjusted_close_prices_matrix <-  adjusted_close_prices_matrix
   obj$adjusted_close_prices_list_df <- as.data.frame(adjusted_close_prices_matrix)
   
   # Create a matrix for the excess log returns and stores it in the local environment
   excess_log_return_matrix <- do.call(cbind, excess_log_returns_list)
-  colnames(excess_log_return_matrix) <- stock_list
+  colnames(excess_log_return_matrix) <- names_list
   obj$excess_log_return_matrix <- excess_log_return_matrix
   obj$excess_log_return_df <- as.data.frame(excess_log_return_matrix)
   
@@ -275,12 +275,13 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   # Store tangncy weights
   obj$tangency_weights <- tangency_weights
   obj$tangency_weights_df <- as.data.frame(tangency_weights)
-  rownames(obj$tangency_weights_df,stock_list)
+  rownames(obj$tangency_weights_df) <- names_list
+  rownames(obj$tangency_weights_df,names_list)
   
   # Store equal weights
   obj$equal_weights <- equal_weights
   obj$equal_weights_df <- as.data.frame(equal_weights)
-  rownames(obj$equal_weights_df,stock_list)
+  rownames(obj$equal_weights_df,names_list)
   
   # Store stocks statistics matrices
   stock_stats_matrix <- sapply(stock_stats, function(x) unlist(x))
@@ -785,7 +786,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     # Store equal weights
     obj$weights <- weights
     obj$weights_df <- as.data.frame(weights)
-    rownames(obj$weights_df) <- stock_list
+    rownames(obj$weights_df) <- names_list
     
   }
   
