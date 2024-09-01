@@ -8,6 +8,7 @@ library(reshape2) # For melt function
 suppressWarnings({
   library(ggrepel)# For frepel function
   })
+library(dplyr)
 
 # Define the portfolio function
 portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
