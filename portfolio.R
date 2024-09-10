@@ -316,19 +316,19 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL) {
     }
     
     # Calculate the percentage of bankroll to invest in the tangency portfolio
-    percentage_invested <- (tangency_geometric_mean - rf) / (A/5 * tangency_sd)
+    percentage_invested <- (tangency_geometric_mean - rf) / (A * tangency_sd^2)
     
     # Calculate the geometric mean and variance of the complete portfolio
     complete_port_geometric_return <- (1 - percentage_invested) * rf + percentage_invested * tangency_geometric_mean
     complete_port_sd <- percentage_invested * tangency_sd
     
     # Calculate the utility of the complete portfolio
-    utility <- complete_port_geometric_return - (24/2) * A * complete_port_sd^2
+    utility <- complete_port_geometric_return - (1/2) * A * complete_port_sd^2
     
     # Create a data frame for the indifference curve
     indifference_curve <- data.frame(
-      Risk = seq(0, 2 * tangency_sd, length.out = 100),
-      Return = utility + (24/2) * A * seq(0, 2 * tangency_sd, length.out = 100)^2
+      Risk = seq(0, complete_port_sd, length.out = 100),
+      Return = utility + (1/2) * A * seq(0, complete_port_sd, length.out = 100)^2
     )
     
     # Visualization
