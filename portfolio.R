@@ -5,14 +5,11 @@ library(ggplot2)  # For Visualization
 library(moments)  # For skewness and kurtosis
 library(MASS)     # For fitdistr function
 library(reshape2) # For melt function
-suppressWarnings({
-  library(ggrepel)# For frepel function
-  })
-library(dplyr)
+library(ggrepel)  # For frepel function
+library(dplyr)    # For Data Manipulation
 
 # Define the portfolio function
-portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
-  
+portfolio <- function(names_list=NULL, from=NULL,rf=NULL) {
   
   ### Set up:
   
@@ -20,102 +17,41 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   # Create an environment to store local variables
   obj <- new.env()
   
-  # Function to calculate additional statistics for given returns
-  additional_stats <- function(returns) {
-    
-    # creates a list of additional statistics
-    add_stats <- list(
-      skewness = skewness(returns, na.rm = TRUE), # Skewness
-      kurtosis = kurtosis(returns, na.rm = TRUE), # Kurtosis
-      VaR = log(quantile(returns, probs = 0.05, na.rm = TRUE)+1), # geometric Value at Risk
-      ES = log(mean(returns[returns <= quantile(returns, probs = 0.05, na.rm = TRUE)], na.rm = TRUE)+1), # geometric Estimated Shortfall
-      lower_partial_sd = log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1), # geometric lower partial standard deviation
-      sortino_ratio = ((log(mean(returns)+1)) - rf) / (log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1)), # geometric Sortino ratio
-      CAGR = (prod(1 + returns, na.rm = TRUE)^(1 / (length(returns) / freq_multiplier)) - 1), # compound annual growth rate
-      ADD = log( mean( cumprod(1 + returns) / cummax( cumprod(1 + returns) ) ) ),
-      MDD = min( cumprod(1 + returns) / cummax( cumprod(1 + returns)) - 1,na.rm = TRUE), # Maximum draw down
-      count = length(returns) # count
-    )
-    
-    # return list
-    return(add_stats)
-    
-  }
   
-  # Function to calculate a matrix of statistics given portfolio weights
-  obj$weighted_stats<- function(port_weights,name=NULL){
-    
-    # Compute the weighted returns of the tangency portfolio
-    weighted_returns <- excess_log_return_matrix %*% port_weights
-    
-    # gather additional statistics
-    stats <- additional_stats(weighted_returns)
-    
-    # create the statistic matrix
-    stats_matrix <- matrix(unlist(stats),ncol=1)
-    colnames(stats_matrix) <- paste(name,"Weighted Port")
-    stats_matrix <- rbind(
-      log(mean(weighted_returns)+1),
-      (log(mean(weighted_returns)+1))-rf,
-      log(sd(weighted_returns,na.rm = TRUE)+1),
-      ((log(mean(weighted_returns)+1))-rf)/(log(sd(weighted_returns,na.rm = TRUE)+1)),
-      stats_matrix)
-    rownames(stats_matrix) <- c("Geo Mean","Geo Risk Premium","Geo Sd","Geo Sharpe","Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
-    
-    # return matrix
-    return(stats_matrix)
-    
-  }
-  
-  # Set the frequency multiplier based on user input (only used for risk free rate division and CAGR)
-  if (frequency == "Daily") {
-    freq_multiplier <- 252  
-  } else if (frequency == "Monthly") {
-    freq_multiplier <- 12
-  } else if (frequency == "Quarterly") {
-    freq_multiplier <- 4
-  } else if (frequency == "Yearly") {
-    freq_multiplier <- 1
-  } else {
-    stop("Invalid frequency type. Please choose from 'Daily', 'Monthly', 'Quarterly', or 'Yearly'.")
-  }
-  
-  
-  ### Data manipulation and Error Handling:
+   ## Risk Free Rate:
   
   
   #suppress the warning that IRX contains NA's
   suppressWarnings({
     
-  # Fetch historical risk-free rates from Yahoo Finance (e.g., 13-week Treasury bill yield)
-  rf_data <- getSymbols("^IRX", src = "yahoo", from = as.Date(from), auto.assign = FALSE)
-  
+    # Fetch historical risk-free rates from Yahoo Finance (e.g., 13-week Treasury bill yield)
+    rf_data <- getSymbols("^IRX", src = "yahoo", from = as.Date(from), auto.assign = FALSE)
+    
   })
   
   #Extracting the adjusted close
-  rf_series <- ((Ad(rf_data) / 100)+1) ^ (1 / freq_multiplier)-1  # Adjusting to decimal and to the time period
+  rf_series <- ((Ad(rf_data) / 100)+1) ^ (1 / 252)-1  # Adjusting to decimal and to the time period
   
   # Replace NA values with the previous rate or average rate
   rf_series <- rf_series[-1]  # Remove the first element because it is Na in excess Ln returns
   rf_series <- na.locf(rf_series) # Replace NA's with previous data point
-  average_rf_rate <- mean(rf_series, na.rm = TRUE)
-  rf_series <- na.fill(rf_series,average_rf_rate) # Replace any leftover Na's with the average
+  rf_series <- na.fill(rf_series,mean(rf_series, na.rm = TRUE)) # Replace any leftover Na's with the average
   
   # Choose the risk-free rate
   if (is.null(rf)) { # if there is no risk free rate given by userr
     # Use historical rates
     risk_free_rates <- rf_series
-    rf <- average_rf_rate
-  } else { # if there is a risk free rate given by user
+    rf <- mean(rf_series, na.rm = TRUE)
+  } 
+  else { # if there is a risk free rate given by user
     # Use a constant rate
-    rf <- (rf+1)^(1/freq_multiplier)-1 # User has to input an anual rate because we divide it for them
+    rf <- (rf+1)^(1/252)-1 # User has to input an anual rate because we divide it for them
     risk_free_rates <- xts(rep(rf, nrow(rf_series)), order.by = index(rf_series))
   }
   
-  # Store the risk rate list and average risk free rate in local variables
-  obj$rf <- rf
-  obj$rf_df <- as.data.frame(risk_free_rates)
-  colnames(obj$rf_df) <- c("^IRX")
+  
+   ## Excess log returns
+  
   
   # Initialize an empty list to store the adjusted close prices and log returns
   adjusted_close_prices_list <- list()
@@ -179,17 +115,13 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     stop("Datasets have different lengths. Please ensure all datasets cover the same time period.")
   }
   
-  # Create a matrix for the adjusted close prices and stores it in the local environment
+  # Create a matrix for the adjusted close prices
   adjusted_close_prices_matrix <- do.call(cbind, adjusted_close_prices_list)
   colnames(adjusted_close_prices_matrix) <- names_list
-  obj$adjusted_close_prices_matrix <-  adjusted_close_prices_matrix
-  obj$adjusted_close_prices_list_df <- as.data.frame(adjusted_close_prices_matrix)
   
-  # Create a matrix for the excess log returns and stores it in the local environment
+  # Create a matrix for the excess log returns
   excess_log_return_matrix <- do.call(cbind, excess_log_returns_list)
   colnames(excess_log_return_matrix) <- names_list
-  obj$excess_log_return_matrix <- excess_log_return_matrix
-  obj$excess_log_return_df <- as.data.frame(excess_log_return_matrix)
   
   
   ### Calculations:
@@ -214,9 +146,6 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   
   dates_list <- index(excess_log_return_matrix)
   end_date <- as.Date(dates_list[length(dates_list)])
-  
-  # Compute additional stats for each stock
-  stock_stats <- lapply(excess_log_returns_list, additional_stats)
   
   # Calculate the Equal Weight portfolio weights
   equal_weights <- rep(1 / length(excess_returns), length(excess_returns))
@@ -256,7 +185,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   tangency_weights <- tangency_weights / sum(tangency_weights)
   
   
-  ### Storage and more Calculations:
+  ### Calculations:
   
   
   # Calculate geometric mean of the tangency portfolio
@@ -269,45 +198,57 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   # Calculate Sharpe ratio of the tangency portfolio
   tangency_sharpe_ratio <- (tangency_geometric_mean - rf) / tangency_sd
   
-  # Store correlation matrix
-  obj$correlation_matrix <- correlation_matrix
-  obj$correlation_df <- as.data.frame(correlation_matrix)
   
-  # Store tangncy weights
-  obj$tangency_weights <- tangency_weights
-  obj$tangency_weights_df <- as.data.frame(tangency_weights)
-  rownames(obj$tangency_weights_df) <- names_list
-  rownames(obj$tangency_weights_df,names_list)
+  ### Functions: 
   
-  # Store equal weights
-  obj$equal_weights <- equal_weights
-  obj$equal_weights_df <- as.data.frame(equal_weights)
-  rownames(obj$equal_weights_df,names_list)
   
-  # Store stocks statistics matrices
-  stock_stats_matrix <- sapply(stock_stats, function(x) unlist(x))
-  rownames(stock_stats_matrix) <- c("Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
-  stock_stats_matrix <- t(stock_stats_matrix)
-  stock_stats_matrix <- cbind(
-    "Geo Mean"= geometric_means,
-    "Geo Risk Premium"= excess_returns,
-    "Geo SD"= geometric_standard_deviations,
-    "Geo Sharpe"= sharpe_ratios, 
-    stock_stats_matrix,
-    "Tangency Weights" = tangency_weights)
-  
-  # Store statistics matrices into local variables
-  obj$stock_stats_matrix <-stock_stats_matrix
-  obj$stock_stats_df <- as.data.frame(stock_stats_matrix)
-  obj$tangency_stats_matrix <-  obj$weighted_stats(tangency_weights,name="Tangency")
-  obj$tangency_stats_df <-  as.data.frame(obj$weighted_stats(tangency_weights,name="Tangency"))
-  obj$equal_weight_stats_matrix <-  obj$weighted_stats(equal_weights,name="Equal")
-  obj$equal_weight_stats_df <-  as.data.frame(obj$weighted_stats(equal_weights,name="Equal"))
-
-  
-  ### Functions:
-  
+  # Function to calculate additional statistics for given returns
+  additional_stats <- function(returns) {
     
+    # creates a list of additional statistics
+    add_stats <- list(
+      skewness = skewness(returns, na.rm = TRUE), # Skewness
+      kurtosis = kurtosis(returns, na.rm = TRUE), # Kurtosis
+      VaR = log(quantile(returns, probs = 0.05, na.rm = TRUE)+1), # geometric Value at Risk
+      ES = log(mean(returns[returns <= quantile(returns, probs = 0.05, na.rm = TRUE)], na.rm = TRUE)+1), # geometric Estimated Shortfall
+      lower_partial_sd = log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1), # geometric lower partial standard deviation
+      sortino_ratio = ((log(mean(returns)+1)) - rf) / (log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1)), # geometric Sortino ratio
+      CAGR = (prod(1 + returns, na.rm = TRUE)^(1 / (length(returns) / 252)) - 1), # compound annual growth rate
+      ADD = log( mean( cumprod(1 + returns) / cummax( cumprod(1 + returns) ) ) ),
+      MDD = min( cumprod(1 + returns) / cummax( cumprod(1 + returns)) - 1,na.rm = TRUE), # Maximum draw down
+      count = length(returns) # count
+    )
+    
+    # return list
+    return(add_stats)
+    
+  }
+  
+  # Function to calculate a matrix of statistics given portfolio weights
+  obj$weighted_stats<- function(port_weights,name=NULL){
+    
+    # Compute the weighted returns of the tangency portfolio
+    weighted_returns <- excess_log_return_matrix %*% port_weights
+    
+    # gather additional statistics
+    stats <- additional_stats(weighted_returns)
+    
+    # create the statistic matrix
+    stats_matrix <- matrix(unlist(stats),ncol=1)
+    colnames(stats_matrix) <- paste(name,"Weighted Port")
+    stats_matrix <- rbind(
+      log(mean(weighted_returns)+1),
+      (log(mean(weighted_returns)+1))-rf,
+      log(sd(weighted_returns,na.rm = TRUE)+1),
+      ((log(mean(weighted_returns)+1))-rf)/(log(sd(weighted_returns,na.rm = TRUE)+1)),
+      stats_matrix)
+    rownames(stats_matrix) <- c("Geo Mean","Geo Risk Premium","Geo Sd","Geo Sharpe","Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
+    
+    # return matrix
+    return(stats_matrix)
+    
+  }
+  
   # Define the function to visualize the efficient frontier function
   obj$ef <- function() {
     
@@ -348,7 +289,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       geom_line(aes(color = "Efficient Frontier")) +
       geom_point(aes(x = tangency_sd * 100, y = tangency_geometric_mean * 100, color = "Tangency Portfolio"), size = 4) +
       geom_abline(aes(intercept = rf * 100, slope = tangency_sharpe_ratio, color = "Capital Allocation Line"), linetype = "dashed") +
-      ggtitle(paste("Efficient Frontier with Tangency Portfolio and Capital Allocation Line of ",frequency," Excess Ln Returns\n(",from," to ",end_date,")",sep="")) +
+      ggtitle(paste("Efficient Frontier with Tangency Portfolio and Capital Allocation Line of Daily Excess Ln Returns\n(",from," to ",end_date,")",sep="")) +
       xlab("Geometric Standard Deviation in P.P. (%)") +
       ylab("Geometric Mean in P.P. (%)") +
       theme_minimal() +
@@ -396,7 +337,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       geom_point(aes(x = tangency_sd*100, y = tangency_geometric_mean*100, color = "Tangency Portfolio"), size = 4) +
       geom_point(aes(x = complete_port_sd*100, y = complete_port_geometric_return*100, color = "Complete Portfolio"), size = 4) +
       geom_abline(aes(intercept = rf*100, slope = tangency_sharpe_ratio, color = "Capital Allocation Line"), linetype = "dashed") +
-      ggtitle(paste("Indifference Curve with Complete Portfolio, Tangency Portfolio, and Capital Allocation Line of ",frequency," Excess Ln Returns (",round(percentage_invested*100,2),"% Invested) (A= ",A,")\n(",from," to ",end_date,")",sep="")) +
+      ggtitle(paste("Indifference Curve with Complete Portfolio, Tangency Portfolio, and Capital Allocation Line of daily Excess Ln Returns (",round(percentage_invested*100,2),"% Invested) (A= ",A,")\n(",from," to ",end_date,")",sep="")) +
       xlab("Geometric Standard Deviation in P.P. (%)") +
       ylab("Geometric Mean in P.P. (%)") +
       theme_minimal() +
@@ -473,24 +414,24 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     cumulative_returns_plot <- ggplot(cumulative_returns_df, aes(x = Date)) +
       geom_line(aes(y = Cumulative_Returns * 100, color = "Compounded Cumulative Excess Ln Returns")) +
       geom_line(aes(y = Average_Cumulative_Return * 100, color = "Geometric Mean"), linetype = "dashed") +
-      ggtitle(paste("Time series of Compounded Cumulative ",frequency," Excess Ln Returns of ", name, " Weighted Portfolio (Final Value: ", round(tail(cumulative_returns, 1) * 100, 2), "%)\n(", from, " to ",end_date,")", sep = "")) +
+      ggtitle(paste("Time series of Compounded Cumulative daily Excess Ln Returns of ", name, " Weighted Portfolio (Final Value: ", round(tail(cumulative_returns, 1) * 100, 2), "%)\n(", from, " to ",end_date,")", sep = "")) +
       xlab("Date") +
-      ylab(paste("Compounded Cumulative",frequency,"Excess Ln Return in P.P. (%)")) +
+      ylab(paste("Compounded Cumulativedaily Excess Ln Return in P.P. (%)")) +
       theme_minimal() +
       scale_color_manual(name = "Legend",
                          values = c("Compounded Cumulative Excess Ln Returns" = "blue",
                                     "Geometric Mean" = "green"),
-                                    #"Mean * 2 SD" = "red",
-                                    #"Mean / 2 SD" = "red"),
+                         #"Mean * 2 SD" = "red",
+                         #"Mean / 2 SD" = "red"),
                          labels = c(
-                           paste("Compounded Cumulative ",frequency," Excess Ln Returns",sep = ""),
+                           paste("Compounded Cumulative daily Excess Ln Returns",sep = ""),
                            paste("Risk Premium (", round((log(mean(weighted_returns)+1)-rf) * 100, 2), "%)", sep = "")
                          ))
     
     print(cumulative_returns_plot)
     
     # Create the histogram of weighted returns
-    hist(weighted_returns+1, breaks = 50, probability = TRUE, col = "lightblue", xlab = paste(frequency," Excess Ln Growth Rates",sep=""), main = paste("Histogram of ",name," Weighted Portfolio ",frequency," Excess Ln Returns with a Lognormal Curve\n(",from," to ",end_date,")",sep=""))
+    hist(weighted_returns+1, breaks = 50, probability = TRUE, col = "lightblue", xlab = paste("Daily Excess Ln Growth Rates"), main = paste("Histogram of ",name," Weighted Portfolio daily Excess Ln Returns with a Lognormal Curve\n(",from," to ",end_date,")",sep=""))
     curve(dlnorm(x, meanlog = meanlog, sdlog = sdlog), add = TRUE, col = "red", lwd = 2)
     # Draw vertical lines for mean and ±2 standard deviations
     abline(v = log(mean(weighted_returns)+1)+1, col = "green", lwd = 2, lty = 2)  # Mean
@@ -507,7 +448,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
              paste("Geo Mean / Geo SD ^2 (",round((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2,4),"%)",sep=""),
              paste("Geo Mean * Geo SD (",round((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1),4),"%)",sep=""),
              paste("Geo Mean / Geo SD (",round((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1),4),"%)",sep="")
-             ), 
+           ), 
            col = c( "green", "red", "red","yellow","yellow"),
            lwd = 2,
            lty = 2,
@@ -539,19 +480,19 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
                            "Mean / SD" = "yellow",
                            "Mean * 2 SD" = "red",
                            "Mean / 2 SD" = "red"
-                           ),
+                         ),
                          labels = c(
-                           paste(frequency," Excess Ln Returns",sep=""),
+                           paste("Daily Excess Ln Returns"),
                            paste("Geometric Mean (",round((log(mean(weighted_returns)+1))*100,2),"%)",sep=""),
                            paste("Geo Mean * Geo SD ^2 (",round(((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1)^2 - 1)*100,2),"%)",sep=""), 
                            paste("Geo Mean * Geo SD (",round(((log(mean(weighted_returns)+1)+1) * (log(sd(weighted_returns)+1)+1) - 1)*100,2),"%)",sep=""),
                            paste("Geo Mean / Geo SD ^2 (",round(((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1)^2 - 1)*100,2),"%)",sep=""),
                            paste("Geo Mean / Geo SD (",round(((log(mean(weighted_returns)+1)+1) / (log(sd(weighted_returns)+1)+1) - 1)*100,2),"%)",sep="")
-                           )
-                         ) +
-      ggtitle(paste("Time Series of ",name, " Weighted Portfolio ",frequency," Excess Ln Returns\n(", from, " to ",end_date,")", sep = "")) +
+                         )
+      ) +
+      ggtitle(paste("Time Series of ",name, " Weighted Portfolio daily Excess Ln Returns\n(", from, " to ",end_date,")", sep = "")) +
       xlab("Date") +
-      ylab(paste(frequency," Excess Ln Returns in P.P. (%)",sep="")) +
+      ylab(paste("Daily Excess Ln Returns in P.P. (%)")) +
       theme_minimal()
     
     print(weighted_returns_ts_plot)
@@ -574,9 +515,9 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       geom_hline(aes(yintercept = average_drawdown * 100, color = "Average Drawdown"), linetype = "dashed", size = 1) +
       geom_hline(aes(yintercept = ((average_drawdown + 1) / sd_drawdown - 1) * 100, color = "Average Drawdown / SD"), linetype = "dashed", size = 1) +
       geom_hline(aes(yintercept = ((average_drawdown + 1) / sd_drawdown^2 - 1) * 100, color = "Average Drawdown / SD^2"), linetype = "dashed", size = 1) +
-      ggtitle(paste("Time Series of ", name, " Weighted Portfolio of ", frequency, " Excess Ln Drawdowns\n(", from, " to ", end_date, ")", sep = "")) +
+      ggtitle(paste("Time Series of ", name, " Weighted Portfolio of Daily Excess Ln Drawdowns\n(", from, " to ", end_date, ")", sep = "")) +
       xlab("Date") +
-      ylab(paste(frequency, " Excess Ln Drawdown in P.P. (%)", sep = "")) +
+      ylab(paste("Daily Excess Ln Drawdown in P.P. (%)", sep = "")) +
       theme_minimal() +
       scale_color_manual(name = "Legend",
                          values = c("Drawdown" = "blue", 
@@ -587,7 +528,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
                            paste("Geo Mean Drawdown: ", round(average_drawdown * 100, 2), "%", sep = ""),
                            paste("Geo Mean Drawdown / Geo SD: ", round(((average_drawdown + 1) / sd_drawdown - 1) * 100, 2), "%", sep = ""),
                            paste("Geo Mean Drawdown / Geo SD^2: ", round(((average_drawdown + 1) / sd_drawdown^2 - 1) * 100, 2), "%", sep = ""),
-                           paste(frequency," Excess Ln Drawdown",sep="")
+                           paste("Daily Excess Ln Drawdown")
                          )) +
       theme(legend.position = "right")
     
@@ -654,9 +595,9 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     comparison_plot <- ggplot(df_melt, aes(x = Date, y = Cumulative_Return * 100, color = Portfolio)) +
       geom_line(size = 1) +
       geom_line(data = geom_mean_melt, aes(x = Date, y = Geo_Mean_Cumulative_Return * 100, color = Portfolio), linetype = "dotted", size = 1) +
-      labs(title = paste("Time Series of Portfolio Compounded Cumulative ", frequency, " Excess Ln Return Comparison\n(", from, " to ", end_date, ")", sep = ""), 
+      labs(title = paste("Time Series of Portfolio Compounded Cumulative Daily Excess Ln Return Comparison\n(", from, " to ", end_date, ")", sep = ""), 
            x = "Date", 
-           y = paste("Compounded Cumulative ", frequency, " Excess Ln Return in P.P. (%)", sep = "")) +
+           y = paste("Compounded Cumulative Daily Excess Ln Return in P.P. (%)", sep = "")) +
       theme_minimal() +
       scale_color_manual(values = c("Tangency" = "blue", "Weighted" = "red", "Equal" = "green"), labels = labels)
     
@@ -676,7 +617,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       scale_fill_gradient(low = "green", high = "red", name = "Correlation") +
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + # Ensure vertical text
-      ggtitle(paste(frequency," Excess Ln Returns Correlation Matrix Heatmap (",from," to ",end_date,")",sep="")) +
+      ggtitle(paste("Daily Excess Ln Returns Correlation Matrix Heatmap (",from," to ",end_date,")",sep="")) +
       xlab("Assets") +
       ylab("Assets")
     
@@ -701,7 +642,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
       geom_point(color = "blue") +
       geom_text(vjust = -0.5, hjust = 0.5) +
       geom_abline(aes(intercept = rf * 100, slope = average_sharpe, color = "Average Sharpe Line"), linetype = "dashed") +
-      ggtitle(paste(frequency, " Excess Ln Returns Risk-Return Scatter Plot\n(", from, " to ", end_date, ")", sep = "")) +
+      ggtitle(paste("Daily Excess Ln Returns Risk-Return Scatter Plot\n(", from, " to ", end_date, ")", sep = "")) +
       xlab("Geometric Standard Deviation in P.P. (%)") +
       ylab("Geometric Mean in P.P. (%)") +
       theme_minimal() +
@@ -735,9 +676,9 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
                       box.padding = 0.3,
                       point.padding = 0.5,
                       segment.color = 'grey50') +
-      ggtitle(paste("Time Series Compounded Cumulative ",frequency," Excess Returns\n(", from, " to ", end_date, ")", sep = "")) +
+      ggtitle(paste("Time Series Compounded Cumulative daily Excess Returns\n(", from, " to ", end_date, ")", sep = "")) +
       xlab("Date") +
-      ylab(paste("Compounded Cumulative ",frequency," Ecxess Ln Return in P.P. (%)",sep="")) +
+      ylab(paste("Compounded Cumulative daily Ecxess Ln Return in P.P. (%)",sep="")) +
       theme_minimal() +
       theme(legend.position = "none") +
       scale_color_viridis_d(option = "C")
@@ -749,30 +690,26 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
   obj$summary <- function(weights=tangency_weights,A=4) {
     
     suppressWarnings({
-    
-    obj$ef()
-    
-    obj$cal(A= A)
-    
-    obj$tangency_returns()
-    
-    obj$plot_correlation_heatmap()
-    
-    obj$risk_return_scatter()
-    
-    obj$plot_cumulative_returns()
-    
-    obj$equal_weight_returns()
-    
-    obj$weighted_returns(weights)
-    
-    obj$comparison_plot(weights)
-    
+      
+      obj$ef()
+      
+      obj$cal(A= A)
+      
+      obj$tangency_returns()
+      
+      obj$plot_correlation_heatmap()
+      
+      obj$risk_return_scatter()
+      
+      obj$plot_cumulative_returns()
+      
+      obj$equal_weight_returns()
+      
+      obj$weighted_returns(weights)
+      
+      obj$comparison_plot(weights)
+      
     })
-    
-    #print(obj$correlation_matrix)
-    
-    #print(obj$stock_stats_matrix)
     
     print(obj$tangency_stats_matrix)
     
@@ -790,6 +727,59 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL, frequency = "Daily") {
     rownames(obj$weights_df) <- names_list
     
   }
+  
+  
+  ### Storage:
+  
+  
+  # Store the risk rate list and average risk free rate in local variables
+  obj$rf <- rf
+  obj$rf_df <- as.data.frame(risk_free_rates)
+  colnames(obj$rf_df) <- c("^IRX")
+  
+  obj$adjusted_close_prices_matrix <-  adjusted_close_prices_matrix
+  obj$adjusted_close_prices_list_df <- as.data.frame(adjusted_close_prices_matrix)
+  
+  obj$excess_log_return_matrix <- excess_log_return_matrix
+  obj$excess_log_return_df <- as.data.frame(excess_log_return_matrix)
+  
+  # Store correlation matrix
+  obj$correlation_matrix <- correlation_matrix
+  obj$correlation_df <- as.data.frame(correlation_matrix)
+  
+  # Store tangncy weights
+  obj$tangency_weights <- tangency_weights
+  obj$tangency_weights_df <- as.data.frame(tangency_weights)
+  rownames(obj$tangency_weights_df) <- names_list
+  rownames(obj$tangency_weights_df,names_list)
+  
+  # Store equal weights
+  obj$equal_weights <- equal_weights
+  obj$equal_weights_df <- as.data.frame(equal_weights)
+  rownames(obj$equal_weights_df,names_list)
+  
+  # Compute additional stats for each stock
+  stock_stats <- lapply(excess_log_returns_list, additional_stats)
+  
+  # Store stocks statistics matrices
+  stock_stats_matrix <- sapply(stock_stats, function(x) unlist(x))
+  rownames(stock_stats_matrix) <- c("Skewness", "Kurtosis", "Geo VaR", "Geo ES", "Geo Lower Partial SD","Geo Sortino Ratio", "CAGR","Geo ADD","MDD","Count")
+  stock_stats_matrix <- t(stock_stats_matrix)
+  stock_stats_matrix <- cbind(
+    "Geo Mean"= geometric_means,
+    "Geo Risk Premium"= excess_returns,
+    "Geo SD"= geometric_standard_deviations,
+    "Geo Sharpe"= sharpe_ratios, 
+    stock_stats_matrix,
+    "Tangency Weights" = tangency_weights)
+  
+  # Store statistics matrices into local variables
+  obj$stock_stats_matrix <-stock_stats_matrix
+  obj$stock_stats_df <- as.data.frame(stock_stats_matrix)
+  obj$tangency_stats_matrix <-  obj$weighted_stats(tangency_weights,name="Tangency")
+  obj$tangency_stats_df <-  as.data.frame(obj$weighted_stats(tangency_weights,name="Tangency"))
+  obj$equal_weight_stats_matrix <-  obj$weighted_stats(equal_weights,name="Equal")
+  obj$equal_weight_stats_df <-  as.data.frame(obj$weighted_stats(equal_weights,name="Equal"))
   
   
   ### END
