@@ -213,7 +213,7 @@ portfolio <- function(names_list=NULL, from=NULL,rf=NULL) {
       ES = log(mean(returns[returns <= quantile(returns, probs = 0.05, na.rm = TRUE)], na.rm = TRUE)+1), # geometric Estimated Shortfall
       lower_partial_sd = log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1), # geometric lower partial standard deviation
       sortino_ratio = ((log(mean(returns)+1)) - rf) / (log(sd(returns[returns < mean(returns, na.rm = TRUE)], na.rm = TRUE)+1)), # geometric Sortino ratio
-      CAGR = (prod(1 + returns, na.rm = TRUE)^(1 / (length(returns) / 252)) - 1), # compound annual growth rate
+      CAGR = (prod(pmax(1 + returns, 0), na.rm = TRUE)^(1 / (length(returns) / 252)) - 1), # compound annual growth rate
       ADD = log( mean( cumprod(1 + returns) / cummax( cumprod(1 + returns) ) ) ),
       MDD = min( cumprod(1 + returns) / cummax( cumprod(1 + returns)) - 1,na.rm = TRUE), # Maximum draw down
       count = length(returns) # count
